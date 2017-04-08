@@ -1,4 +1,4 @@
-TARGET=render-nodes-minimal
+TARGET=compute
 
 all: Makefile $(TARGET)
 

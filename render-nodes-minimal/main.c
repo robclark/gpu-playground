@@ -47,9 +47,12 @@ static struct {
    struct {
       unsigned x, y, z;
    } num_groups;
+   unsigned bo_size;    /* in dwords */
 } opts = {
+      /* defaults: */
       .device = "/dev/dri/renderD128",
       .num_groups = { 1, 1, 1 },
+      .bo_size = 256,
 };
 
 #define get_proc(name) do {                           \
@@ -58,6 +61,7 @@ static struct {
 
 static struct {
    PFNGLDISPATCHCOMPUTEPROC glDispatchCompute;
+   PFNGLGETPROGRAMRESOURCEINDEXPROC glGetProgramResourceIndex;
 } ext;
 
 
@@ -73,6 +77,102 @@ const char *readfile(int fd)
    return strdup(text);
 }
 
+static void *mem(int dwords, bool initialize)
+{
+   unsigned *buf = calloc(dwords, sizeof(buf[0]));
+
+   if (initialize) {
+      for (int i = 0; i < dwords; i++) {
+         buf[i] = i;
+      }
+   }
+
+   return buf;
+}
+
+static void
+hexdump_dwords(const void *data, int sizedwords)
+{
+   uint32_t *buf = (void *) data;
+   int i;
+
+   for (i = 0; i < sizedwords; i++) {
+      if (!(i % 8))
+         printf("\t\t\t%08X:   ", (unsigned int) i*4);
+      printf(" %08x", buf[i]);
+      if ((i % 8) == 7)
+         printf("\n");
+   }
+
+   if (i % 8)
+      printf("\n");
+}
+
+static void setup_ubo(GLint program, const char *name)
+{
+   GLuint ubo = 0, idx;
+   static int cnt = 0;
+   int i = cnt++;
+
+   idx = glGetUniformBlockIndex(program, name);
+   if (idx == GL_INVALID_INDEX)
+      return;
+
+   printf("UBO: %s at %u\n", name, idx);
+
+   int sz = opts.bo_size;
+
+   glGenBuffers(1, &ubo);
+   glBindBuffer(GL_UNIFORM_BUFFER, ubo);
+   glBufferData(GL_UNIFORM_BUFFER, 4 * sz, mem(sz, true), GL_DYNAMIC_DRAW);
+   glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+   glBindBufferBase(GL_UNIFORM_BUFFER, i, ubo);
+   glUniformBlockBinding(program, idx, i);
+}
+
+static GLuint ssbo_table[256];
+
+static void setup_ssbo(GLint program, const char *name, bool input)
+{
+   GLuint ssbo = 0, idx;
+
+   idx = ext.glGetProgramResourceIndex(program, GL_SHADER_STORAGE_BLOCK, name);
+   if (idx == GL_INVALID_INDEX)
+      return;
+
+   printf("SSBO: %s at %u\n", name, idx);
+
+   int sz = opts.bo_size;
+
+   glGenBuffers(1, &ssbo);
+   glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
+   glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sz, mem(sz, input), GL_STATIC_DRAW);
+
+   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, idx, ssbo);
+
+   ssbo_table[idx] = ssbo;
+}
+
+static void dump_ssbo(GLint program, const char *name)
+{
+   GLuint idx;
+   void *p;
+
+   idx = ext.glGetProgramResourceIndex(program, GL_SHADER_STORAGE_BLOCK, name);
+   if (idx == GL_INVALID_INDEX)
+      return;
+
+   printf("Dump SSBO: %s at %u\n", name, idx);
+
+   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_table[idx]);
+   p = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, opts.bo_size * 4, GL_MAP_READ_BIT);
+
+   hexdump_dwords(p, opts.bo_size);
+
+   glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+}
+
 static void run(void)
 {
    bool res;
@@ -84,6 +184,7 @@ static void run(void)
    assert(gbm != NULL);
 
    get_proc(glDispatchCompute);
+   get_proc(glGetProgramResourceIndex);
 
    /* setup EGL from the GBM device */
    EGLDisplay egl_dpy = eglGetPlatformDisplay(EGL_PLATFORM_GBM_MESA, gbm, NULL);
@@ -171,11 +272,17 @@ static void run(void)
    glUseProgram(shader_program);
    assert(glGetError() == GL_NO_ERROR);
 
+   setup_ssbo(shader_program, "Input", true);
+   setup_ssbo(shader_program, "Output", false);
+   setup_ubo(shader_program, "Input");
+
    /* dispatch computation */
    ext.glDispatchCompute(opts.num_groups.x, opts.num_groups.y, opts.num_groups.z);
    assert(glGetError() == GL_NO_ERROR);
 
    printf("Compute shader dispatched and finished successfully\n");
+
+   dump_ssbo(shader_program, "Output");
 
    /* free stuff */
    glDeleteProgram(shader_program);
@@ -185,21 +292,23 @@ static void run(void)
    close(fd);
 }
 
-static const char *shortopts = "D:G:";
+static const char *shortopts = "D:G:S:";
 
 static const struct option longopts[] = {
       {"device", required_argument, 0, 'D'},
       {"groups", required_argument, 0, 'G'},
+      {"size",   required_argument, 0, 'S'},
       {0, 0, 0, 0}
 };
 
 static void usage(const char *name)
 {
-   printf("Usage: %s [-DG] SHADER\n"
+   printf("Usage: %s [-DGS] SHADER\n"
          "\n"
          "options:\n"
          "    -D, --device=DEVICE      use the given device\n"
          "    -G, --groups=X,Y,Z       use specified group size\n"
+         "    -S, --size=DWORDS        size in dwords for UBOs, SSBOs\n"
          ,
          name);
 }
@@ -218,6 +327,9 @@ int main(int argc, char *argv[])
                &opts.num_groups.y, &opts.num_groups.z);
          if (ret != 3)
             goto usage;
+         break;
+      case 'S':
+         opts.bo_size = atoi(optarg);
          break;
       default:
          goto usage;
