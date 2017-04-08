@@ -48,6 +48,15 @@ void main(void) {                                                       \
 }                                                                       \
 "
 
+#define get_proc(name) do {                           \
+      ext.name = (void *)eglGetProcAddress(#name);    \
+   } while (0)
+
+static struct {
+   PFNGLDISPATCHCOMPUTEPROC glDispatchCompute;
+} ext;
+
+
 int32_t
 main (int32_t argc, char* argv[])
 {
@@ -58,6 +67,8 @@ main (int32_t argc, char* argv[])
 
    struct gbm_device *gbm = gbm_create_device (fd);
    assert (gbm != NULL);
+
+   get_proc(glDispatchCompute);
 
    /* setup EGL from the GBM device */
    EGLDisplay egl_dpy = eglGetPlatformDisplay (EGL_PLATFORM_GBM_MESA, gbm, NULL);
@@ -149,7 +160,7 @@ main (int32_t argc, char* argv[])
    assert (glGetError () == GL_NO_ERROR);
 
    /* dispatch computation */
-   glDispatchCompute (1, 1, 1);
+   ext.glDispatchCompute (1, 1, 1);
    assert (glGetError () == GL_NO_ERROR);
 
    printf ("Compute shader dispatched and finished successfully\n");
