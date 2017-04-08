@@ -1,9 +1,9 @@
 #version 310 es
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-layout(binding = 0) buffer Input {
+layout(binding = 0, std430) buffer Input {
     uint values[256];
 } sb_in;
-layout (binding = 1) buffer Output {
+layout (binding = 1, std430) buffer Output {
     uint values[256];
 } sb_out;
 void main (void) {
