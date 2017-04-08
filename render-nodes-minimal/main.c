@@ -248,6 +248,8 @@ static void run(void)
    glGetIntegerv(GL_MAX_COMPUTE_SHARED_MEMORY_SIZE, &mem_size);
    printf("GL_MAX_COMPUTE_SHARED_MEMORY_SIZE: %d\n", mem_size);
 
+   printf("shader:\n%s\n", opts.shader);
+
    /* setup a compute shader */
    GLuint compute_shader = glCreateShader(GL_COMPUTE_SHADER);
 
