@@ -98,7 +98,7 @@ hexdump_dwords(const void *data, int sizedwords)
 
    for (i = 0; i < sizedwords; i++) {
       if (!(i % 8))
-         printf("\t\t\t%08X:   ", (unsigned int) i*4);
+         printf("\t%08X:   ", (unsigned int) i*4);
       printf(" %08x", buf[i]);
       if ((i % 8) == 7)
          printf("\n");
@@ -259,7 +259,22 @@ static void run(void)
    assert(glGetError() == GL_NO_ERROR);
 
    glCompileShader(compute_shader);
-   assert(glGetError() == GL_NO_ERROR);
+
+   GLint ret;
+   glGetShaderiv(compute_shader, GL_COMPILE_STATUS, &ret);
+   if (!ret) {
+      char *log;
+
+      printf("shader compilation failed!:");
+      glGetShaderiv(compute_shader, GL_INFO_LOG_LENGTH, &ret);
+
+      if (ret > 1) {
+         log = malloc(ret);
+         glGetShaderInfoLog(compute_shader, ret, NULL, log);
+         printf("%s", log);
+      }
+      return;
+   }
 
    GLuint shader_program = glCreateProgram();
 
