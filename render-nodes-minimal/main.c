@@ -108,6 +108,45 @@ hexdump_dwords(const void *data, int sizedwords)
       printf("\n");
 }
 
+static int setup_tex2d(GLint program, const char *name, GLint unit, bool image)
+{
+   GLuint tex;
+   GLint handle;
+
+   handle = glGetUniformLocation(program, name);
+   if (handle >= 0) {
+      printf("setup %s\n", name);
+
+      glGenTextures(1, &tex);
+
+      glActiveTexture(GL_TEXTURE0 + unit);
+      glBindTexture(GL_TEXTURE_2D, tex);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+      if (image) {
+         bool initialize = !!strstr(name, "in");
+         glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, 64, 64);
+         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 64, 64, GL_RED_INTEGER,
+               GL_UNSIGNED_INT, mem(64 * 64 * 4, initialize));
+         glBindImageTexture(unit, tex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
+      } else {
+         glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, 64, 64, 0, GL_RED_INTEGER,
+               GL_UNSIGNED_INT, mem(64 * 64 * 4, true));
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, 1);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, 4);
+
+         glUniform1i(handle, unit);
+      }
+
+      unit++;
+   }
+
+   return unit;
+}
+
 static void setup_ubo(GLint program, const char *name)
 {
    GLuint ubo = 0, idx;
@@ -292,6 +331,11 @@ static void run(void)
    setup_ssbo(shader_program, "Input", true);
    setup_ssbo(shader_program, "Output", false);
    setup_ubo(shader_program, "Input");
+
+   GLint unit = 0;
+   unit = setup_tex2d(shader_program, "tex2d0", unit, false);
+   unit = setup_tex2d(shader_program, "img2d0in", unit, true);
+   unit = setup_tex2d(shader_program, "img2d0out", unit, true);
 
    /* dispatch computation */
    ext.glDispatchCompute(opts.num_groups.x, opts.num_groups.y, opts.num_groups.z);
