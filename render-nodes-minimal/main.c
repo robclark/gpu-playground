@@ -108,6 +108,10 @@ hexdump_dwords(const void *data, int sizedwords)
       printf("\n");
 }
 
+static const GLsizei imgw = 64;
+static const GLsizei imgh = 64;
+static GLuint imgtex;   /* output image texture */
+
 static int setup_tex2d(GLint program, const char *name, GLint unit, bool image)
 {
    GLuint tex;
@@ -127,14 +131,20 @@ static int setup_tex2d(GLint program, const char *name, GLint unit, bool image)
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
       if (image) {
-         bool initialize = !!strstr(name, "in");
-         glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, 64, 64);
-         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 64, 64, GL_RED_INTEGER,
-               GL_UNSIGNED_INT, mem(64 * 64 * 4, initialize));
-         glBindImageTexture(unit, tex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
+         bool input = !!strstr(name, "in");
+         glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, imgw, imgh);
+         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, imgw, imgh, GL_RED_INTEGER,
+               GL_UNSIGNED_INT, mem(imgw * imgh * 4, input));
+         if (input) {
+            glBindImageTexture(unit, tex, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32UI);
+         } else {
+            glBindImageTexture(unit, tex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R32UI);
+            /* save the output texture: */
+            imgtex = tex;
+         }
       } else {
-         glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, 64, 64, 0, GL_RED_INTEGER,
-               GL_UNSIGNED_INT, mem(64 * 64 * 4, true));
+         glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, imgw, imgh, 0, GL_RED_INTEGER,
+               GL_UNSIGNED_INT, mem(imgw * imgh * 4, true));
          glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, 1);
          glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, 4);
 
@@ -210,6 +220,33 @@ static void dump_ssbo(GLint program, const char *name)
    hexdump_dwords(p, opts.bo_size);
 
    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+}
+
+static void dump_img(GLint program, const char *name)
+{
+   GLint handle;
+   GLuint fbo;
+   uint32_t buf[imgw * imgh * 4];
+
+   handle = glGetUniformLocation(program, name);
+   if (handle < 0)
+      return;
+
+   glGenFramebuffers(1, &fbo);
+
+   printf("Dump image: %s at %u\n", name, handle);
+   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, imgtex, 0);
+   assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+
+   glReadBuffer(GL_COLOR_ATTACHMENT0);
+   glReadPixels(0, 0, imgw, imgh, GL_RGBA_INTEGER, GL_UNSIGNED_INT, buf);
+
+   /* since we had to read as RGBA we have dummy GBA channels, so repack: */
+   for (int i = 0; i < imgw * imgh; i++)
+      buf[i] = buf[i*4];
+
+   hexdump_dwords(buf, imgw * imgh);
 }
 
 static void run(void)
@@ -339,11 +376,14 @@ static void run(void)
 
    /* dispatch computation */
    ext.glDispatchCompute(opts.num_groups.x, opts.num_groups.y, opts.num_groups.z);
+   glFlush();
+   glMemoryBarrier(GL_ALL_BARRIER_BITS);
    assert(glGetError() == GL_NO_ERROR);
 
    printf("Compute shader dispatched and finished successfully\n");
 
    dump_ssbo(shader_program, "Output");
+   dump_img(shader_program, "img2d0out");
 
    /* free stuff */
    glDeleteProgram(shader_program);
