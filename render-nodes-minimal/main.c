@@ -48,11 +48,13 @@ static struct {
       unsigned x, y, z;
    } num_groups;
    unsigned bo_size;    /* in dwords */
+   bool indirect;
 } opts = {
       /* defaults: */
       .device = "/dev/dri/renderD128",
       .num_groups = { 1, 1, 1 },
       .bo_size = 256,
+      .indirect = false,
 };
 
 #define get_proc(name) do {                           \
@@ -61,6 +63,7 @@ static struct {
 
 static struct {
    PFNGLDISPATCHCOMPUTEPROC glDispatchCompute;
+   PFNGLDISPATCHCOMPUTEINDIRECTPROC glDispatchComputeIndirect;
    PFNGLGETPROGRAMRESOURCEINDEXPROC glGetProgramResourceIndex;
 } ext;
 
@@ -260,6 +263,7 @@ static void run(void)
    assert(gbm != NULL);
 
    get_proc(glDispatchCompute);
+   get_proc(glDispatchComputeIndirect);
    get_proc(glGetProgramResourceIndex);
 
    /* setup EGL from the GBM device */
@@ -375,7 +379,27 @@ static void run(void)
    unit = setup_tex2d(shader_program, "img2d0out", unit, true);
 
    /* dispatch computation */
-   ext.glDispatchCompute(opts.num_groups.x, opts.num_groups.y, opts.num_groups.z);
+   if (opts.indirect) {
+      struct {
+              uint32_t num_groups_x;
+              uint32_t num_groups_y;
+              uint32_t num_groups_z;
+      } data[] = {
+            { opts.num_groups.x, opts.num_groups.y, opts.num_groups.z },
+            { opts.num_groups.x, opts.num_groups.y, opts.num_groups.z },
+            { opts.num_groups.x, opts.num_groups.y, opts.num_groups.z },
+            { opts.num_groups.x, opts.num_groups.y, opts.num_groups.z },
+      };
+      GLuint buffer;
+
+      glGenBuffers(1, &buffer);
+      glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, buffer);
+      glBufferData(GL_DISPATCH_INDIRECT_BUFFER, sizeof(data), data, GL_STATIC_DRAW);
+
+      ext.glDispatchComputeIndirect(0);
+   } else {
+      ext.glDispatchCompute(opts.num_groups.x, opts.num_groups.y, opts.num_groups.z);
+   }
    glFlush();
    glMemoryBarrier(GL_ALL_BARRIER_BITS);
    assert(glGetError() == GL_NO_ERROR);
@@ -393,12 +417,13 @@ static void run(void)
    close(fd);
 }
 
-static const char *shortopts = "D:G:S:";
+static const char *shortopts = "D:G:IS:";
 
 static const struct option longopts[] = {
-      {"device", required_argument, 0, 'D'},
-      {"groups", required_argument, 0, 'G'},
-      {"size",   required_argument, 0, 'S'},
+      {"device",   required_argument, 0, 'D'},
+      {"groups",   required_argument, 0, 'G'},
+      {"indirect", no_argument,       0, 'I'},
+      {"size",     required_argument, 0, 'S'},
       {0, 0, 0, 0}
 };
 
@@ -409,6 +434,7 @@ static void usage(const char *name)
          "options:\n"
          "    -D, --device=DEVICE      use the given device\n"
          "    -G, --groups=X,Y,Z       use specified group size\n"
+         "    -I, --indirect           use glDispatchComputeIndirect()\n"
          "    -S, --size=DWORDS        size in dwords for UBOs, SSBOs\n"
          ,
          name);
@@ -428,6 +454,9 @@ int main(int argc, char *argv[])
                &opts.num_groups.y, &opts.num_groups.z);
          if (ret != 3)
             goto usage;
+         break;
+      case 'I':
+         opts.indirect = true;
          break;
       case 'S':
          opts.bo_size = atoi(optarg);
