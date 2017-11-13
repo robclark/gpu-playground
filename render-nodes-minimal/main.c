@@ -82,13 +82,16 @@ const char *readfile(int fd)
 
 static void *mem(int dwords, bool initialize)
 {
+   static int base = 0;
    unsigned *buf = calloc(dwords, sizeof(buf[0]));
 
    if (initialize) {
       for (int i = 0; i < dwords; i++) {
-         buf[i] = i;
+         buf[i] = i + base;
       }
    }
+
+   base++;
 
    return buf;
 }
@@ -371,6 +374,11 @@ static void run(void)
 
    setup_ssbo(shader_program, "Input", true);
    setup_ssbo(shader_program, "Output", false);
+   for (int i=0; i < 64; i++) {
+      char name[32];
+      sprintf(name, "in%02d", i);
+      setup_ssbo(shader_program, name, true);
+   }
    setup_ubo(shader_program, "Input");
 
    GLint unit = 0;
